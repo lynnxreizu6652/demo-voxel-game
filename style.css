@@ -1,0 +1,16 @@
+body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; user-select: none; touch-action: none; }
+canvas { display: block; }
+
+#coords { position: absolute; top: 10px; right: 10px; color: white; font-size: 16px; font-weight: bold; background: rgba(0, 0, 0, 0.5); padding: 10px 15px; border-radius: 5px; z-index: 10; pointer-events: none; border: 2px solid white; }
+#ui { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0, 0, 0, 0.8); padding: 30px; border-radius: 5px; cursor: pointer; z-index: 20; border: 2px solid white; }
+#crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 20px; pointer-events: none; display: none; z-index: 10; }
+
+.mobile-controls { position: absolute; bottom: 20px; z-index: 15; display: none; }
+#dpad { left: 20px; width: 150px; height: 150px; display: grid; grid-template-areas: ". up ." "left . right" ". down ."; gap: 5px; }
+.joystick-btn { background: rgba(255, 255, 255, 0.3); border: 2px solid white; border-radius: 10px; color: white; font-weight: bold; font-size: 18px; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.joystick-btn:active { background: rgba(255, 255, 255, 0.6); }
+
+#btn-up { grid-area: up; } #btn-down { grid-area: down; }
+#btn-left { grid-area: left; } #btn-right { grid-area: right; }
+#jump-btn { right: 20px; bottom: 40px; width: 70px; height: 70px; border-radius: 50%; background: rgba(255, 255, 255, 0.3); border: 3px solid white; color: white; font-size: 24px; font-weight: bold; display: flex; align-items: center; justify-content: center; touch-action: none; }
+#jump-btn:active { background: rgba(255, 255, 255, 0.6); }
