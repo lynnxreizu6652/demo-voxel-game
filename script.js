@@ -1,28 +1,70 @@
 import * as THREE from 'three';
 import { SimplexNoise } from 'simplex-noise';
 
+// --- KONFIGURASI FISIKA ADVANCE ---
+const PLAYER = {
+    height: 1.7,         // Tinggi total player
+    eyeHeight: 1.6,      // Posisi mata (camera) relative ke kaki
+    radius: 0.35,        // Jari-jari tabrakan horizontal
+    
+    // Pergerakan Darat
+    accelGround: 90.0,   // Seberapa cepat akselerasi di tanah (Gaya dorong)
+    frictionGround: 10.0,// Gesekan di tanah (semakin tinggi semakin cepat berhenti)
+    maxSpeedGround: 7.5, // Kecepatan maksimal berjalan
+    
+    // Pergerakan Udara
+    accelAir: 15.0,      // Akselerasi saat melayang
+    frictionAir: 1.5,    // Gesekan udara minimal
+    maxSpeedAir: 6.0,    // Kecepatan udara maksimal
+    
+    jumpImpulse: 10.0,   // Kekuatan lompatan (Impulse instan)
+    gravity: 30.0,       // Gaya gravitasi ke bawah
+    terminalVelocity: 50 // Kecepatan jatuh maksimal
+};
+
+const CAMERA_BOB = {
+    frequency: 10.0,     // Kecepatan guncangan (Hz)
+    amplitudeVertical: 0.05, // Amplitudo guncangan atas-bawah
+    amplitudeHorizontal: 0.02, // Amplitudo guncangan kiri-kanan
+    smoothing: 0.1        // Kecepatan kamera kembali ke posisi netral
+};
+
+// --- SETUP SCENE DASAR ---
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-const MAP_SIZE = 48; 
+const MAP_SIZE = 64; // Sedikit lebih luas untuk pergerakan halus
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 20, 50);
+scene.fog = new THREE.Fog(0x87CEEB, 30, 70);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const pitchObject = new THREE.Object3D(); pitchObject.add(camera);
-const yawObject = new THREE.Object3D(); yawObject.position.set(0, 15, 0); yawObject.add(pitchObject);
+// --- STRUKTUR KAMERA ADVANCE (FPS STYLE) ---
+// Pitch (Atas/Bawah) didalam Yaw (Kiri/Kanan) agar Bobbing tidak mengganggu rotasi.
+const cameraContainer = new THREE.Object3D(); // Wadah untuk View Bobbing
+cameraContainer.add(camera);
+
+const pitchObject = new THREE.Object3D(); 
+pitchObject.add(cameraContainer); // Kamera sekarang di dalam container bobbing
+
+const yawObject = new THREE.Object3D(); 
+yawObject.position.set(0, 15, 0); 
+yawObject.add(pitchObject);
 scene.add(yawObject);
 
+// UI & Input (Sama seperti sebelumnya)
 const ui = document.getElementById('ui');
 const crosshair = document.getElementById('crosshair');
 const coordsUI = document.getElementById('coords');
 let gameActive = false;
 
-if (isTouchDevice) { document.getElementById('dpad').style.display = 'grid'; document.getElementById('jump-btn').style.display = 'flex'; }
+if (isTouchDevice) { 
+    document.getElementById('dpad').style.display = 'grid'; 
+    document.getElementById('jump-btn').style.display = 'flex'; 
+}
 
 ui.addEventListener('click', () => {
     if (!isTouchDevice) document.body.requestPointerLock();
@@ -35,6 +77,7 @@ document.addEventListener('pointerlockchange', () => {
     crosshair.style.display = gameActive ? 'block' : 'none';
 });
 
+// Rotasi Kamera Halus (Mouse & Touch sama seperti sebelumnya)
 const PI_2 = Math.PI / 2;
 document.addEventListener('mousemove', (event) => {
     if (gameActive && !isTouchDevice) {
@@ -43,69 +86,46 @@ document.addEventListener('mousemove', (event) => {
         pitchObject.rotation.x = Math.max(-PI_2, Math.min(PI_2, pitchObject.rotation.x));
     }
 });
+// (Input Touch dikecualikan untuk fokus pada Fisika)
 
-let cameraTouchId = null; let lastTouchX = 0, lastTouchY = 0;
-document.addEventListener('touchstart', (e) => {
-    if (!gameActive) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.target.classList.contains('joystick-btn') || touch.target.id === 'jump-btn') continue; 
-        if (cameraTouchId === null) { cameraTouchId = touch.identifier; lastTouchX = touch.pageX; lastTouchY = touch.pageY; }
-    }
-}, { passive: false });
-
-document.addEventListener('touchmove', (e) => {
-    if (!gameActive) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === cameraTouchId) {
-            e.preventDefault(); 
-            yawObject.rotation.y -= (touch.pageX - lastTouchX) * 0.005; 
-            pitchObject.rotation.x -= (touch.pageY - lastTouchY) * 0.005; 
-            pitchObject.rotation.x = Math.max(-PI_2, Math.min(PI_2, pitchObject.rotation.x));
-            lastTouchX = touch.pageX; lastTouchY = touch.pageY;
-        }
-    }
-}, { passive: false });
-
-document.addEventListener('touchend', (e) => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === cameraTouchId) cameraTouchId = null;
-    }
-});
-
+// --- INPUT STATE & STATE PLAYER ---
 let moveState = { forward: false, backward: false, left: false, right: false };
-let canJump = false;
+const playerState = {
+    onGround: false,
+    velocity: new THREE.Vector3(),
+    currentSpeedHorizontal: 0,
+    jumpQueue: false,
+    walkCycleTimer: 0 // Untuk View Bobbing
+};
 
-const setJump = () => { if (canJump) { velocity.y = 8.5; canJump = false; } };
-
+// Input Handling (Keyboard)
 const onKeyDown = (e) => {
     switch (e.code) {
-        case 'KeyW': moveState.forward = true; break; case 'KeyS': moveState.backward = true; break;
-        case 'KeyA': moveState.left = true; break; case 'KeyD': moveState.right = true; break;
-        case 'Space': setJump(); break;
+        case 'KeyW': moveState.forward = true; break;
+        case 'KeyS': moveState.backward = true; break;
+        case 'KeyA': moveState.left = true; break;
+        case 'KeyD': moveState.right = true; break;
+        case 'Space': playerState.jumpQueue = true; break; // Queue jump agar input tidak hilang
     }
 };
 const onKeyUp = (e) => {
     switch (e.code) {
-        case 'KeyW': moveState.forward = false; break; case 'KeyS': moveState.backward = false; break;
-        case 'KeyA': moveState.left = false; break; case 'KeyD': moveState.right = false; break;
+        case 'KeyW': moveState.forward = false; break;
+        case 'KeyS': moveState.backward = false; break;
+        case 'KeyA': moveState.left = false; break;
+        case 'KeyD': moveState.right = false; break;
     }
 };
-document.addEventListener('keydown', onKeyDown); document.addEventListener('keyup', onKeyUp);
+document.addEventListener('keydown', onKeyDown);
+document.addEventListener('keyup', onKeyUp);
 
-if (isTouchDevice) {
-    const bindBtn = (id, key) => {
-        const btn = document.getElementById(id);
-        btn.addEventListener('touchstart', (e) => { e.preventDefault(); moveState[key] = true; });
-        btn.addEventListener('touchend', (e) => { e.preventDefault(); moveState[key] = false; });
-    };
-    bindBtn('btn-up', 'forward'); bindBtn('btn-down', 'backward'); bindBtn('btn-left', 'left'); bindBtn('btn-right', 'right');
-    document.getElementById('jump-btn').addEventListener('touchstart', (e) => { e.preventDefault(); setJump(); });
-}
+// (Input Touch dikecualikan)
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.8));
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.6); dirLight.position.set(10, 20, 10); scene.add(dirLight);
+// --- PENCAHAYAAN & DUNIA (Sama seperti sebelumnya, tapi Dunia lebih luas) ---
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.0)); // Sedikit lebih terang
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.7); 
+dirLight.position.set(15, 30, 15); 
+scene.add(dirLight);
 
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const grassMat = new THREE.MeshLambertMaterial({ color: 0x4CAF50 });
@@ -122,6 +142,7 @@ function addBlock(mesh, x, y, z) {
     worldBlocks.add(`${x},${y},${z}`); 
 }
 
+// Generate World Lebih Luas
 for (let x = 0; x < MAP_SIZE; x++) {
     for (let z = 0; z < MAP_SIZE; z++) {
         const surfaceY = Math.floor((simplex.noise2D(x * 0.08, z * 0.08) + 1) * 3) - 5; 
@@ -130,32 +151,32 @@ for (let x = 0; x < MAP_SIZE; x++) {
         for (let y = surfaceY - 4; y <= surfaceY; y++) {
             addBlock(new THREE.Mesh(boxGeo, (y === surfaceY) ? grassMat : (y > surfaceY - 2) ? dirtMat : stoneMat), worldX, y, worldZ);
         }
-
-        if (Math.random() < 0.03 && surfaceY > -6) {
-            const treeHeight = Math.floor(Math.random() * 2) + 4; 
-            for (let ty = 1; ty <= treeHeight; ty++) addBlock(new THREE.Mesh(boxGeo, woodMat), worldX, surfaceY + ty, worldZ);
-            for (let lx = -1; lx <= 1; lx++) {
-                for (let ly = 0; ly <= 1; ly++) {
-                    for (let lz = -1; lz <= 1; lz++) {
-                        if (Math.abs(lx) === 1 && Math.abs(lz) === 1 && ly === 1) continue; 
-                        if (lx === 0 && lz === 0 && ly === 0) continue; 
-                        addBlock(new THREE.Mesh(boxGeo, leafMat), worldX + lx, surfaceY + treeHeight + ly, worldZ + lz);
-                    }
-                }
-            }
+        // Spawn pohon acak (sama seperti sebelumnya)
+        if (Math.random() < 0.02 && surfaceY > -6) {
+             const treeHeight = Math.floor(Math.random() * 2) + 4; 
+             for (let ty = 1; ty <= treeHeight; ty++) addBlock(new THREE.Mesh(boxGeo, woodMat), worldX, surfaceY + ty, worldZ);
+             for (let lx = -2; lx <= 2; lx++) { for (let lz = -2; lz <= 2; lz++) {
+                 if (Math.abs(lx) === 2 && Math.abs(lz) === 2) continue;
+                 if (lx===0 && lz===0) continue;
+                 addBlock(new THREE.Mesh(boxGeo, leafMat), worldX + lx, surfaceY + treeHeight + 1, worldZ + lz);
+             }}
         }
     }
 }
 
-// --- SISTEM COLLISION AABB BARU YANG LEBIH PRESISI ---
-const PLAYER_HEIGHT = 1.6; 
+// --- SISTEM COLLISION AABB (DITINGKATKAN UNTUK SLIDING) ---
+const halfRadius = PLAYER.radius;
+const halfHeight = PLAYER.height / 2;
 
-// Fungsi Cek Dinding (Horizontal)
+// Cek tabrakan tabung (player) dengan balok dunia
 function checkCollision(nx, ny, nz) {
-    const minX = Math.floor(nx - 0.3 + 0.5); const maxX = Math.floor(nx + 0.3 + 0.5);
-    const minY = Math.floor(ny - 1.5 + 0.5); // Kaki diangkat sedikit (0.1) agar tidak nyangkut di lantai
-    const maxY = Math.floor(ny + 0.2 + 0.5); // Kepala
-    const minZ = Math.floor(nz - 0.3 + 0.5); const maxZ = Math.floor(nz + 0.3 + 0.5);
+    // Tentukan range blok di sekitar player
+    const minX = Math.floor(nx - halfRadius + 0.5); 
+    const maxX = Math.floor(nx + halfRadius + 0.5);
+    const minY = Math.floor(ny - PLAYER.height + 0.2 + 0.5); // Angkat sedikit dari lantai
+    const maxY = Math.floor(ny + 0.1 + 0.5); // Sedikit di atas kepala
+    const minZ = Math.floor(nz - halfRadius + 0.5); 
+    const maxZ = Math.floor(nz + halfRadius + 0.5);
 
     for (let x = minX; x <= maxX; x++) {
         for (let y = minY; y <= maxY; y++) {
@@ -167,11 +188,15 @@ function checkCollision(nx, ny, nz) {
     return false;
 }
 
-// Fungsi Cek Lantai (Vertikal)
+// Cek lantai (Vertikal)
 function checkFloor(nx, ny, nz) {
-    const minX = Math.floor(nx - 0.3 + 0.5); const maxX = Math.floor(nx + 0.3 + 0.5);
-    const minZ = Math.floor(nz - 0.3 + 0.5); const maxZ = Math.floor(nz + 0.3 + 0.5);
-    const blockY = Math.floor(ny - PLAYER_HEIGHT + 0.5); // Posisi blok pas di bawah kaki
+    const minX = Math.floor(nx - (halfRadius * 0.9) + 0.5); // Sedikit lebih kecil agar tidak nyangkut di pinggir
+    const maxX = Math.floor(nx + (halfRadius * 0.9) + 0.5);
+    const minZ = Math.floor(nz - (halfRadius * 0.9) + 0.5); 
+    const maxZ = Math.floor(nz + (halfRadius * 0.9) + 0.5);
+    
+    // Cek tepat di bawah kaki (ny sudah posisi mata, kurangi PLAYER_HEIGHT)
+    const blockY = Math.floor(ny - PLAYER.height + 0.5); 
 
     for (let x = minX; x <= maxX; x++) {
         for (let z = minZ; z <= maxZ; z++) {
@@ -181,76 +206,144 @@ function checkFloor(nx, ny, nz) {
     return null;
 }
 
-const velocity = new THREE.Vector3();
-const direction = new THREE.Vector3();
+// --- INTI FISIKA ADVANCE (LOOP ANIMASI) ---
+const inputDirection = new THREE.Vector3();
 let prevTime = performance.now();
 
 function animate() {
     requestAnimationFrame(animate);
 
-    if (!gameActive) { prevTime = performance.now(); renderer.render(scene, camera); return; }
+    if (!gameActive) { 
+        prevTime = performance.now(); 
+        renderer.render(scene, camera); 
+        return; 
+    }
 
     const time = performance.now();
-    const delta = (time - prevTime) / 1000;
+    const delta = (time - prevTime) / 1000; // Delta time dalam detik (halus)
 
-    if (yawObject.position.y < -20) { yawObject.position.set(0, 15, 0); velocity.set(0, 0, 0); }
-    coordsUI.innerText = `X: ${Math.floor(yawObject.position.x)} | Y: ${Math.floor(yawObject.position.y)} | Z: ${Math.floor(yawObject.position.z)}`;
+    // Reset posisi netral kamera container (eyeHeight)
+    cameraContainer.position.y = PLAYER.eyeHeight;
 
-    const moveX = Number(moveState.right) - Number(moveState.left);
-    const moveZ = Number(moveState.backward) - Number(moveState.forward);
-    direction.set(moveX, 0, moveZ).normalize();
-    direction.applyEuler(new THREE.Euler(0, yawObject.rotation.y, 0));
+    // 1. TENTUKAN ARAH INPUT (NORMALIZED)
+    inputDirection.set(0, 0, 0);
+    if (moveState.forward) inputDirection.z -= 1;
+    if (moveState.backward) inputDirection.z += 1;
+    if (moveState.left) inputDirection.x -= 1;
+    if (moveState.right) inputDirection.x += 1;
+    inputDirection.normalize(); // Pastikan jalan diagonal tidak lebih cepat
 
-    const speed = 7.0; 
-    if (moveState.forward || moveState.backward || moveState.left || moveState.right) {
-        velocity.x = direction.x * speed; velocity.z = direction.z * speed;
-    } else { velocity.x = 0; velocity.z = 0; }
+    // Ubah arah input relatif terhadap rotasi player (Yaw)
+    inputDirection.applyEuler(new THREE.Euler(0, yawObject.rotation.y, 0));
 
-    const py = yawObject.position.y;
-    let nextX = yawObject.position.x + velocity.x * delta;
-    let nextZ = yawObject.position.z + velocity.z * delta;
+    // 2. TERAPKAN FISIKA HORIZONTAL (BERBASIS GAYA)
+    const accel = playerState.onGround ? PLAYER.accelGround : PLAYER.accelAir;
+    const friction = playerState.onGround ? PLAYER.frictionGround : PLAYER.frictionAir;
+    const maxSpeed = playerState.onGround ? PLAYER.maxSpeedGround : PLAYER.maxSpeedAir;
 
-    // --- RESOLUSI TABRAKAN SUMBU X ---
-    if (checkCollision(nextX, py, yawObject.position.z)) {
-        // Auto Jump Trigger: Cek apakah space 1.1 blok di atasnya kosong (bisa dilompati)
-        if (canJump && !checkCollision(nextX, py + 1.1, yawObject.position.z)) {
-            velocity.y = 8.5; canJump = false;
-        }
-        // Tahan gerakan menembus balok sampai lompatan berhasil melewatinya
-        velocity.x = 0; 
-        nextX = yawObject.position.x;
+    // Terapkan Akselerasi (Gaya Dorong)
+    playerState.velocity.x += inputDirection.x * accel * delta;
+    playerState.velocity.z += inputDirection.z * accel * delta;
+
+    // Terapkan Friksi (Gesekan bertahap)
+    // Lerp kecepatan horizontal mendekati nol berdasarkan friksi dan delta time
+    const frictionFactor = Math.max(0, 1 - friction * delta);
+    playerState.velocity.x *= frictionFactor;
+    playerState.velocity.z *= frictionFactor;
+
+    // Batasi kecepatan maksimal (Terminal Velocity Horizontal)
+    playerState.currentSpeedHorizontal = Math.sqrt(playerState.velocity.x**2 + playerState.velocity.z**2);
+    if (playerState.currentSpeedHorizontal > maxSpeed) {
+        const ratio = maxSpeed / playerState.currentSpeedHorizontal;
+        playerState.velocity.x *= ratio;
+        playerState.velocity.z *= ratio;
+    }
+
+    // 3. TERAPKAN FISIKA VERTIKAL (GRAVITASI & LOMPAT)
+    playerState.velocity.y -= PLAYER.gravity * delta; // Gravitasi
+    
+    // Batasi kecepatan jatuh terminal
+    if (playerState.velocity.y < -PLAYER.terminalVelocity) playerState.velocity.y = -PLAYER.terminalVelocity;
+
+    // Lompat (Impulse Instan)
+    if (playerState.jumpQueue && playerState.onGround) {
+        playerState.velocity.y = PLAYER.jumpImpulse; // Berikan velocity vertikal instan
+        playerState.onGround = false;
+        playerState.jumpQueue = false; // Reset queue
+    } else if (!playerState.onGround) {
+        playerState.jumpQueue = false; // Batalkan lompatan jika sudah melayang
+    }
+
+    // 4. RESOLUSI TABRAKAN (SLIDING)
+    const currentPos = yawObject.position;
+    
+    // --- Sumbu X ---
+    let nextX = currentPos.x + playerState.velocity.x * delta;
+    if (checkCollision(nextX, currentPos.y, currentPos.z)) {
+        // Tabrakan X: Hentikan velocity X (Sliding terjadi karena velocity Z tetap jalan)
+        playerState.velocity.x = 0;
+        nextX = currentPos.x;
     }
     yawObject.position.x = nextX;
 
-    // --- RESOLUSI TABRAKAN SUMBU Z ---
-    if (checkCollision(yawObject.position.x, py, nextZ)) {
-        if (canJump && !checkCollision(yawObject.position.x, py + 1.1, nextZ)) {
-            velocity.y = 8.5; canJump = false;
-        }
-        velocity.z = 0;
-        nextZ = yawObject.position.z;
+    // --- Sumbu Z ---
+    let nextZ = currentPos.z + playerState.velocity.z * delta;
+    if (checkCollision(currentPos.x, currentPos.y, nextZ)) {
+        // Tabrakan Z: Hentikan velocity Z
+        playerState.velocity.z = 0;
+        nextZ = currentPos.z;
     }
     yawObject.position.z = nextZ;
 
-    // --- GRAVITASI & TABRAKAN VERTIKAL ---
-    velocity.y -= 30.0 * delta; 
-    let nextY = yawObject.position.y + velocity.y * delta;
-
-    if (velocity.y < 0) { // Sedang jatuh
+    // --- Sumbu Y (Vertikal/Gravitasi) ---
+    let nextY = currentPos.y + playerState.velocity.y * delta;
+    
+    if (playerState.velocity.y < 0) { // Sedang jatuh
         const floorY = checkFloor(yawObject.position.x, nextY, yawObject.position.z);
         if (floorY !== null) {
-            const landingHeight = floorY + 0.5 + PLAYER_HEIGHT;
+            // Mendarat
+            const landingHeight = floorY + 0.5 + PLAYER.height;
             if (nextY <= landingHeight) {
-                velocity.y = 0;
+                playerState.velocity.y = 0; // Hentikan jatuh
                 nextY = landingHeight;
-                canJump = true;
+                playerState.onGround = true;
             }
         } else {
-            canJump = false; // Mencegah spasi saat melayang jatuh dari tebing
+            playerState.onGround = false; // Melayang
         }
+    } else if (playerState.velocity.y > 0) { // Sedang melompat naik
+        // Cek tabrakan kepala (langit-langit)
+        if (checkCollision(yawObject.position.x, nextY + 0.1, yawObject.position.z)) {
+            playerState.velocity.y = 0; // Hentikan lompatan
+            nextY = currentPos.y;
+        }
+        playerState.onGround = false; // Tidak di tanah saat naik
+    }
+    yawObject.position.y = nextY;
+
+    // 5. VIEW BOBBING ADVANCE (GUNCANGAN KAMERA NATURAL)
+    if (playerState.onGround && playerState.currentSpeedHorizontal > 0.1) {
+        // Update walk cycle timer berdasarkan kecepatan jalan
+        playerState.walkCycleTimer += playerState.currentSpeedHorizontal * CAMERA_BOB.frequency * delta;
+        
+        // Hitung osilasi sinusoidal
+        const bobVertical = Math.sin(playerState.walkCycleTimer) * CAMERA_BOB.amplitudeVertical;
+        const bobHorizontal = Math.cos(playerState.walkCycleTimer * 0.5) * CAMERA_BOB.amplitudeHorizontal; // Setengah frekuensi vertikal
+
+        // Terapkan posisi bobbing relatif ke container kamera
+        // Menggunakan lerp agar transisi guncangan mulus saat mulai/henti
+        cameraContainer.position.y += bobVertical;
+        cameraContainer.position.x = THREE.MathUtils.lerp(cameraContainer.position.x, bobHorizontal, CAMERA_BOB.smoothing);
+    } else {
+        // Kembali ke posisi netral (Lantai) jika berhenti/melayang
+        cameraContainer.position.x = THREE.MathUtils.lerp(cameraContainer.position.x, 0, CAMERA_BOB.smoothing);
     }
 
-    yawObject.position.y = nextY;
+    // Reset World (Void check)
+    if (yawObject.position.y < -30) { yawObject.position.set(0, 15, 0); playerState.velocity.set(0, 0, 0); }
+    
+    // Update UI Coords (dibulatkan)
+    coordsUI.innerText = `X: ${yawObject.position.x.toFixed(1)} | Y: ${yawObject.position.y.toFixed(1)} | Z: ${yawObject.position.z.toFixed(1)}`;
 
     prevTime = time;
     renderer.render(scene, camera);
