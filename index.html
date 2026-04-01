@@ -12,7 +12,6 @@
         /* UI In-Game */
         #coords { position: absolute; top: 10px; right: 10px; color: white; font-size: 16px; font-weight: bold; background: rgba(0, 0, 0, 0.5); padding: 10px 15px; border-radius: 5px; z-index: 10; pointer-events: none; border: 2px solid white; display: none; }
         #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 20px; pointer-events: none; display: none; z-index: 10; }
-        #pause-ui { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0, 0, 0, 0.8); padding: 30px; border-radius: 5px; cursor: pointer; z-index: 20; border: 2px solid white; display: none; }
 
         /* UI Kontrol Mobile */
         .mobile-controls { position: absolute; bottom: 20px; z-index: 15; display: none; }
@@ -26,45 +25,25 @@
         #jump-btn { right: 20px; bottom: 40px; width: 70px; height: 70px; border-radius: 50%; background: rgba(255, 255, 255, 0.3); border: 3px solid white; color: white; font-size: 24px; font-weight: bold; display: flex; align-items: center; justify-content: center; touch-action: none; }
         #jump-btn:active { background: rgba(255, 255, 255, 0.6); }
 
-        /* --- MAIN MENU UI --- */
-        #main-menu-container {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            background-color: #333;
-            background-image: url('textures/dirt.png'); 
-            background-repeat: repeat;
-            background-size: 64px 64px;
-            image-rendering: pixelated; /* Agar tekstur dirt terlihat tajam/kotak-kotak */
-            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000;
-        }
+        /* --- SISTEM UI MENU TERPADU --- */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; }
         
-        /* Lapisan gelap agar menu mudah dibaca */
-        .menu-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: -1; }
+        #bg-dirt { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #333; background-image: url('textures/dirt.png'); background-repeat: repeat; background-size: 64px 64px; image-rendering: pixelated; z-index: -2; }
+        #bg-dark { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: -1; }
 
-        .menu-box {
-            background: rgba(0, 0, 0, 0.85); padding: 40px; border: 4px solid #777;
-            display: flex; flex-direction: column; gap: 15px; text-align: center; width: 320px;
-            box-shadow: 10px 10px 0 rgba(0,0,0,0.5);
-        }
-        
+        .menu-box { background: rgba(0, 0, 0, 0.85); padding: 40px; border: 4px solid #777; display: flex; flex-direction: column; gap: 15px; text-align: center; width: 320px; box-shadow: 10px 10px 0 rgba(0,0,0,0.5); }
         .menu-title { font-size: 42px; color: #fff; margin-bottom: 20px; font-weight: bold; text-shadow: 4px 4px 0 #000; letter-spacing: 2px; }
         
-        .menu-btn {
-            background: #555; border: 2px solid #aaa; color: white; padding: 12px; font-size: 20px;
-            cursor: pointer; font-family: 'Courier New', monospace; font-weight: bold; text-shadow: 2px 2px 0 #000;
-            transition: all 0.1s;
-        }
+        .menu-btn { background: #555; border: 2px solid #aaa; color: white; padding: 12px; font-size: 20px; cursor: pointer; font-family: 'Courier New', monospace; font-weight: bold; text-shadow: 2px 2px 0 #000; transition: all 0.1s; }
         .menu-btn:hover { background: #777; border-color: #fff; }
         .menu-btn:active { transform: scale(0.95); }
 
-        .menu-input {
-            background: rgba(0,0,0,0.5); border: 2px solid #777; color: white; padding: 10px;
-            font-size: 18px; font-family: monospace; text-align: center; width: 100%; box-sizing: border-box;
-        }
-        
+        .menu-input { background: rgba(0,0,0,0.5); border: 2px solid #777; color: white; padding: 10px; font-size: 18px; font-family: monospace; text-align: center; width: 100%; box-sizing: border-box; }
         .opt-label { color: white; font-weight: bold; font-size: 16px; margin-top: 10px; text-align: left; text-shadow: 1px 1px 0 #000; }
         .opt-slider { width: 100%; cursor: pointer; }
 
         .hidden { display: none !important; }
+        .pointer-none { pointer-events: none !important; }
     </style>
     
     <script type="importmap">
@@ -79,7 +58,6 @@
 <body>
     <div id="coords">X: 0 | Y: 0 | Z: 0</div>
     <div id="crosshair">+</div>
-    <div id="pause-ui"><h2>Game Paused</h2><p>Klik untuk Melanjutkan</p></div>
 
     <div class="mobile-controls" id="dpad">
         <div class="joystick-btn" id="btn-up">W</div>
@@ -89,36 +67,40 @@
     </div>
     <div class="mobile-controls" id="jump-btn">⬆</div>
 
-    <div id="main-menu-container">
-        <div class="menu-overlay"></div>
+    <div id="ui-layer">
+        <div id="bg-dirt"></div>
+        <div id="bg-dark"></div>
 
         <div id="menu-home" class="menu-box">
             <div class="menu-title">CAVE GAME</div>
             <button class="menu-btn" id="btn-play">Play</button>
-            <button class="menu-btn" id="btn-options">Options</button>
+            <button class="menu-btn" id="btn-opt-main">Options</button>
         </div>
 
         <div id="menu-play" class="menu-box hidden">
             <div class="menu-title" style="font-size: 32px;">Create World</div>
-            <label class="opt-label">World Seed (Leave empty for random):</label>
-            <input type="text" id="seed-input" class="menu-input" placeholder="e.g. hello world">
+            <label class="opt-label">World Seed (Opsional):</label>
+            <input type="text" id="seed-input" class="menu-input" placeholder="e.g. hello">
             <button class="menu-btn" id="btn-new-game" style="margin-top: 10px;">New Game</button>
             <button class="menu-btn" id="btn-back-play">Back</button>
         </div>
 
         <div id="menu-options" class="menu-box hidden">
             <div class="menu-title" style="font-size: 32px;">Options</div>
-            
-            <label class="opt-label">Render Distance: <span id="val-dist">4</span> Chunks</label>
+            <label class="opt-label">Render Distance: <span id="val-dist">2</span></label>
             <input type="range" id="opt-dist" class="opt-slider" min="2" max="10" step="1" value="4">
-            
             <label class="opt-label">Field of View: <span id="val-fov">75</span></label>
             <input type="range" id="opt-fov" class="opt-slider" min="50" max="110" step="1" value="75">
-
             <label class="opt-label">Brightness: <span id="val-bright">100</span>%</label>
             <input type="range" id="opt-bright" class="opt-slider" min="20" max="150" step="10" value="100">
-
             <button class="menu-btn" id="btn-back-options" style="margin-top:20px;">Back</button>
+        </div>
+
+        <div id="menu-pause" class="menu-box hidden">
+            <div class="menu-title" style="font-size: 32px;">Game Paused</div>
+            <button class="menu-btn" id="btn-resume">Resume</button>
+            <button class="menu-btn" id="btn-opt-pause">Options</button>
+            <button class="menu-btn" id="btn-quit" style="background:#8b2a2a; border-color:#e26a6a;">Quit to Title</button>
         </div>
     </div>
 
